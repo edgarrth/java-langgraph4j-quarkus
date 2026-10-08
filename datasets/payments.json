@@ -1,0 +1,7 @@
+[
+ {"id":"seed-normal","amountMinor":15000,"currency":"PEN","scenario":"NORMAL"},
+ {"id":"seed-review","amountMinor":500000,"currency":"PEN","scenario":"REVIEW"},
+ {"id":"seed-decline","amountMinor":10000,"currency":"USD","scenario":"DECLINE"},
+ {"id":"seed-failover","amountMinor":25000,"currency":"PEN","scenario":"FAILOVER"},
+ {"id":"seed-compensate","amountMinor":25000,"currency":"PEN","scenario":"COMPENSATE"}
+]

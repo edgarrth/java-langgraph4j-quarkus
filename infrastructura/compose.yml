@@ -1,0 +1,84 @@
+name: axiz-payment-graph
+x-application: &application
+  image: axiz-payment-graph:1.0.0
+  build:
+    context: ..
+    dockerfile: infrastructura/Dockerfile
+    additional_contexts:
+      axiz-base: service:base
+      axiz-runtime: service:runtime-base
+  restart: unless-stopped
+  environment: &environment
+    API_KEY: ${API_KEY:-local-demo-key}
+    SIMULATOR_DELAY_MS: ${SIMULATOR_DELAY_MS:-300}
+    CHECKPOINT_DIR: /data/checkpoints
+    INTEGRATION_URL: http://simulator:8080
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/q/health/ready"]
+    interval: 15s
+    timeout: 3s
+    retries: 20
+    start_period: 20s
+services:
+  base:
+    image: axiz-payment-base:1.0.0
+    build:
+      context: ..
+      dockerfile: infrastructura/Dockerfile.base
+      target: builder
+    entrypoint: ["/bin/true"]
+  runtime-base:
+    image: axiz-payment-runtime:1.0.0
+    build:
+      context: ..
+      dockerfile: infrastructura/Dockerfile.base
+      target: runtime
+    entrypoint: ["/bin/true"]
+  simulator:
+    <<: *application
+    ports: ["127.0.0.1:${SIMULATOR_PORT:-8081}:8080"]
+  orchestrator:
+    <<: *application
+    profiles: ["all"]
+    ports: ["127.0.0.1:${HTTP_PORT:-8080}:8080"]
+    volumes: ["checkpoints:/data/checkpoints"]
+    depends_on:
+      simulator: {condition: service_healthy}
+  seed:
+    image: axiz-payment-base:1.0.0
+    profiles: ["all"]
+    entrypoint: ["bash", "/datasets/seed.sh"]
+    environment:
+      API_KEY: ${API_KEY:-local-demo-key}
+      BASE_URL: http://orchestrator:8080
+      FRONTEND_PORT: ${FRONTEND_PORT:-4200}
+    volumes: ["../datasets:/datasets:ro"]
+    depends_on:
+      orchestrator: {condition: service_healthy}
+    restart: "no"
+  frontend-base:
+    image: axiz-payment-frontend-base:1.0.0
+    profiles: ["all"]
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.base
+    entrypoint: ["/bin/true"]
+  frontend:
+    image: axiz-payment-frontend:1.0.0
+    profiles: ["all"]
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      additional_contexts:
+        axiz-frontend-base: service:frontend-base
+    ports: ["127.0.0.1:${FRONTEND_PORT:-4200}:8080"]
+    depends_on:
+      orchestrator: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  checkpoints:

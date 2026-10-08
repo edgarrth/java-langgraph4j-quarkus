@@ -1,0 +1,358 @@
+<a class="skip-link" href="#main-content">Saltar al contenido principal</a>
+<div class="app-shell" [class.sidebar-visible]="sidebarOpen()">
+  @if (sidebarOpen()) {
+    <button
+      class="mobile-backdrop"
+      type="button"
+      aria-label="Cerrar navegación"
+      (click)="sidebarOpen.set(false)"
+    ></button>
+  }
+  <aside class="sidebar" aria-label="Navegación principal">
+    <div class="brand">
+      <img src="assets/axiz-logo@2x.png" alt="Axiz" class="brand-logo" /><span
+        >Payment<br />Orchestration Lab</span
+      >
+    </div>
+    <button class="button primary" (click)="reset()" [disabled]="busy()">
+      Nuevo pago
+    </button>
+    <div class="nav-label">OPERACIONES</div>
+    <div class="nav-link active">
+      Procesamiento de pagos <small>Seguimiento y revisión</small>
+    </div>
+    <div class="nav-label history-label">
+      PAGOS RECIENTES <span>{{ recent().length }}</span>
+    </div>
+    <nav class="recent" aria-label="Pagos recientes">
+      @for (id of recent(); track id) {
+        <button
+          (click)="open(id)"
+          [disabled]="busy()"
+          [class.active]="snapshot()?.state?.id === id"
+        >
+          {{ id }}
+        </button>
+      } @empty {
+        <p>Los pagos consultados aparecerán aquí.</p>
+      }
+    </nav>
+    <div class="sidebar-footer">
+      <span class="status-dot" [class.online]="online()"></span
+      >{{ online() ? 'Servicio disponible' : 'Disponibilidad por verificar'
+      }}<small>LangGraph4j · Quarkus · Java 25</small>
+    </div>
+  </aside>
+  <main id="main-content">
+    <header class="topbar">
+      <button
+        class="menu button"
+        (click)="sidebarOpen.set(!sidebarOpen())"
+        aria-label="Alternar navegación"
+      >
+        Menú
+      </button>
+      <div>
+        <span class="eyebrow">AXIZ / PAYMENT OPERATIONS</span>
+        <h1>Procesamiento de pagos</h1>
+        <p>Se sigue cada decisión, desde la validación hasta la captura.</p>
+      </div>
+      <span class="version">Entorno de demostración</span>
+    </header>
+    @if (error()) {
+      <div class="alert error" role="alert">{{ error() }}</div>
+    }
+    @if (notice()) {
+      <div class="alert" role="status">{{ notice() }}</div>
+    }
+    <section class="summary" aria-label="Resumen del pago">
+      <div>
+        <span class="eyebrow">ESTADO ACTUAL</span
+        ><strong
+          [class.success]="status() === 'CAPTURED'"
+          [class.warning]="review()"
+          >{{ label(status()) }}</strong
+        >
+      </div>
+      <div>
+        <span class="eyebrow">IMPORTE</span
+        ><strong
+          >{{ payment.amountMinor / 100 | number: '1.2-2' }}
+          <small>{{ payment.currency }}</small></strong
+        >
+      </div>
+      <div>
+        <span class="eyebrow">ADQUIRENTE</span
+        ><strong>{{ currentState()?.acquirer ?? 'Por determinar' }}</strong>
+      </div>
+      <div>
+        <span class="eyebrow">SEGUIMIENTO</span
+        ><strong class="connection"
+          ><span class="status-dot" [class.online]="busy()"></span
+          >{{ connection() }}</strong
+        >
+      </div>
+    </section>
+    <div class="workspace">
+      <section class="panel compose">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">SOLICITUD</span>
+            <h2>Configurar el pago</h2>
+          </div>
+          <span class="tag">SSE</span>
+        </div>
+        <form #paymentForm="ngForm" (ngSubmit)="start()">
+          <label
+            >Identificador del pago<input
+              name="id"
+              [(ngModel)]="payment.id"
+              required
+              pattern="[a-zA-Z0-9-]{1,64}"
+              [disabled]="busy() || !!snapshot()"
+              autocomplete="off"
+          /></label>
+          <div class="form-row">
+            <label
+              >Importe en unidades menores<input
+                name="amount"
+                type="number"
+                [(ngModel)]="payment.amountMinor"
+                required
+                min="1"
+                max="100000000"
+                step="1"
+                [disabled]="busy() || !!snapshot()" /></label
+            ><label
+              >Moneda<select
+                name="currency"
+                [(ngModel)]="payment.currency"
+                [disabled]="busy() || !!snapshot()"
+              >
+                <option>PEN</option>
+                <option>USD</option>
+              </select></label
+            >
+          </div>
+          <span class="field-label">Escenario de procesamiento</span>
+          <div class="scenario-list">
+            @for (scenario of scenarios; track scenario.value) {
+              <button
+                type="button"
+                [class.selected]="payment.scenario === scenario.value"
+                [disabled]="busy() || !!snapshot()"
+                (click)="choose(scenario.value)"
+                [attr.aria-pressed]="payment.scenario === scenario.value"
+              >
+                <span class="radio"></span
+                ><span
+                  ><strong>{{ scenario.label }}</strong
+                  ><small>{{ scenario.description }}</small></span
+                >
+              </button>
+            }
+          </div>
+          <details class="credentials">
+            <summary>Acceso al entorno</summary>
+            <label
+              >Clave de acceso<input
+                name="key"
+                type="password"
+                [(ngModel)]="apiKey"
+                [disabled]="busy()"
+                autocomplete="off" /></label
+            ><small
+              >Se utiliza en esta sesión y no se guarda en el navegador.</small
+            >
+          </details>
+          <button
+            class="button primary full"
+            type="submit"
+            [disabled]="paymentForm.invalid || busy() || !!snapshot()"
+          >
+            {{
+              busy()
+                ? 'Procesamiento en curso…'
+                : 'Procesar con seguimiento en
+            vivo'
+            }}
+          </button>
+          @if (busy()) {
+            <button type="button" class="button full" (click)="disconnect()">
+              Detener seguimiento local
+            </button>
+          }
+        </form>
+        <div class="lookup">
+          <span class="eyebrow">RECUPERAR UN PAGO</span>
+          <div>
+            <input
+              aria-label="Identificador a consultar"
+              [(ngModel)]="lookupId"
+              placeholder="Identificador del pago"
+            /><button
+              class="button"
+              (click)="open(lookupId)"
+              [disabled]="busy() || !lookupId.trim()"
+            >
+              Consultar
+            </button>
+          </div>
+        </div>
+      </section>
+      <section class="panel execution">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">EJECUCIÓN</span>
+            <h2>Recorrido del pago</h2>
+          </div>
+          <span class="tag" [class.live]="busy()">{{
+            busy() ? 'En vivo' : timeline().length + ' eventos'
+          }}</span>
+        </div>
+        @if (review()) {
+          <div class="approval" role="status">
+            <span class="eyebrow">DECISIÓN REQUERIDA</span>
+            <h3>Se necesita una revisión humana</h3>
+            <p>
+              El pago permanece pausado. Al aprobarse, se continúa con
+              autorización y captura; al rechazarse, se finaliza sin autorizar.
+            </p>
+            <div>
+              <button
+                class="button primary"
+                [disabled]="busy()"
+                (click)="decide('APPROVED')"
+              >
+                Aprobar y continuar</button
+              ><button
+                class="button danger"
+                [disabled]="busy()"
+                (click)="decide('REJECTED')"
+              >
+                Rechazar pago
+              </button>
+            </div>
+          </div>
+        }
+        <div class="flow-stages">
+          <span [class.done]="timeline().length > 0 || snapshot()"
+            >Validación</span
+          ><span [class.done]="!!currentState()?.risk">Riesgo y comercio</span
+          ><span [class.current]="review()" [class.done]="terminal()"
+            >Decisión</span
+          ><span [class.done]="!!currentState()?.acquirer">Autorización</span
+          ><span
+            [class.done]="status() === 'CAPTURED' || status() === 'COMPENSATED'"
+            >Liquidación</span
+          >
+        </div>
+        <div
+          class="timeline"
+          aria-label="Eventos de ejecución"
+          aria-live="polite"
+        >
+          @for (event of timeline(); track $index) {
+            <article class="timeline-row">
+              <span class="timeline-dot"></span>
+              <div>
+                <strong>{{ nodeLabel(event.node) }}</strong
+                ><small
+                  >{{ label(event.state.status) }}
+                  @if (event.state.acquirer) {
+                    · {{ event.state.acquirer }}
+                    @if (event.state.attempt) {
+                      · intento {{ event.state.attempt }}
+                    }
+                  }
+                </small>
+              </div>
+              <time>{{ event.at }}</time>
+            </article>
+          } @empty {
+            <div class="empty">
+              <div class="empty-symbol">PG</div>
+              <h3>
+                {{
+                  snapshot()
+                    ? 'Estado recuperado'
+                    : 'El recorrido aparecerá aquí'
+                }}
+              </h3>
+              <p>
+                {{
+                  snapshot()
+                    ? 'Se puede consultar cada estado guardado en el
+              historial inferior.'
+                    : 'Se selecciona un escenario y se procesa el
+              pago para observar sus decisiones en tiempo real.'
+                }}
+              </p>
+            </div>
+          }
+        </div>
+        @if (snapshot()) {
+          <div class="outcome">
+            <div>
+              <span class="eyebrow">ÚLTIMO ESTADO GUARDADO</span
+              ><strong>{{ snapshot()?.state?.id }}</strong
+              ><small
+                >Siguiente paso: {{ nodeLabel(snapshot()!.nextNode) }}</small
+              >
+            </div>
+            <button
+              class="button"
+              (click)="open(payment.id)"
+              [disabled]="busy()"
+            >
+              Actualizar estado
+            </button>
+            @if (!terminal() && !review()) {
+              <button class="button" (click)="retry()" [disabled]="busy()">
+                Reanudar nodo pendiente
+              </button>
+            }
+          </div>
+        }
+      </section>
+    </div>
+    @if (history().length) {
+      <section class="panel history-panel">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">TRAZABILIDAD</span>
+            <h2>Estados guardados</h2>
+            <p>
+              Se consulta un estado anterior sin repetir operaciones de pago.
+            </p>
+          </div>
+          <span class="tag">{{ history().length }} checkpoints</span>
+        </div>
+        <div class="history-grid">
+          <div class="checkpoint-list">
+            @for (item of history(); track item.checkpointId) {
+              <button
+                (click)="selected.set(item)"
+                [class.active]="selected()?.checkpointId === item.checkpointId"
+              >
+                <span>{{ nodeLabel(item.node ?? '') }}</span
+                ><small>{{ item.state.status }}</small
+                ><code>{{ item.checkpointId.slice(0, 12) }}</code>
+              </button>
+            }
+          </div>
+          <div class="checkpoint-detail">
+            @if (selected()) {
+              <h3>Estado del checkpoint</h3>
+              <pre>{{ selected() | json }}</pre>
+            } @else {
+              <p>
+                Se selecciona un checkpoint para consultar su estado completo.
+              </p>
+            }
+          </div>
+        </div>
+      </section>
+    }
+  </main>
+</div>
