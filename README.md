@@ -1,4 +1,4 @@
-# Orquestación de pagos con LangGraph4j y Quarkus
+# LangGraph4j y Quarkus
 
 Se implementa un flujo de integración de servicios mediante un grafo de estados ejecutable. LangGraph4j constituye el motor de orquestación: se definen nodos, transiciones, canales con reducers, ejecución paralela, ciclos acotados, subgrafos, checkpoints y pausas para intervención humana. Quarkus expone las operaciones HTTP, aplica validación y permite integrar el motor mediante CDI. No se necesita un LLM para este caso técnico: las decisiones de pagos se mantienen deterministas y verificables.
 
