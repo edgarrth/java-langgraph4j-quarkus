@@ -1,358 +1,402 @@
-<a class="skip-link" href="#main-content">Saltar al contenido principal</a>
-<div class="app-shell" [class.sidebar-visible]="sidebarOpen()">
-  @if (sidebarOpen()) {
-    <button
-      class="mobile-backdrop"
-      type="button"
-      aria-label="Cerrar navegación"
-      (click)="sidebarOpen.set(false)"
-    ></button>
-  }
-  <aside class="sidebar" aria-label="Navegación principal">
-    <div class="brand">
-      <img src="assets/axiz-logo@2x.png" alt="Axiz" class="brand-logo" /><span
-        >Payment<br />Orchestration Lab</span
-      >
-    </div>
-    <button class="button primary" (click)="reset()" [disabled]="busy()">
-      Nuevo pago
-    </button>
-    <div class="nav-label">OPERACIONES</div>
-    <div class="nav-link active">
-      Procesamiento de pagos <small>Seguimiento y revisión</small>
-    </div>
-    <div class="nav-label history-label">
-      PAGOS RECIENTES <span>{{ recent().length }}</span>
-    </div>
-    <nav class="recent" aria-label="Pagos recientes">
-      @for (id of recent(); track id) {
-        <button
-          (click)="open(id)"
-          [disabled]="busy()"
-          [class.active]="snapshot()?.state?.id === id"
-        >
-          {{ id }}
-        </button>
-      } @empty {
-        <p>Los pagos consultados aparecerán aquí.</p>
-      }
-    </nav>
-    <div class="sidebar-footer">
-      <span class="status-dot" [class.online]="online()"></span
-      >{{ online() ? 'Servicio disponible' : 'Disponibilidad por verificar'
-      }}<small>LangGraph4j · Quarkus · Java 25</small>
-    </div>
-  </aside>
-  <main id="main-content">
-    <header class="topbar">
+@if (legacy()) {
+  <div class="legacy-banner">
+    <button type="button" (click)="legacy.set(false)">
+      Volver al copilot conversacional</button
+    ><span>Laboratorio determinista · requiere el perfil legacy</span>
+  </div>
+  <payment-console />
+} @else {
+  <a class="skip-link" href="#chat-main">Saltar al chat</a>
+  <div class="shell">
+    @if (sidebarOpen()) {
       <button
-        class="menu button"
-        (click)="sidebarOpen.set(!sidebarOpen())"
-        aria-label="Alternar navegación"
+        class="backdrop"
+        aria-label="Cerrar navegación"
+        (click)="sidebarOpen.set(false)"
+      ></button>
+    }
+    <aside class="sidebar" [class.open]="sidebarOpen()">
+      <div class="brand">
+        <img src="assets/axiz-logo@2x.png" alt="Axiz" /><span
+          >Payment Operations<br /><strong>AI Copilot</strong></span
+        >
+      </div>
+      <button
+        class="button primary new-chat"
+        (click)="reset()"
+        [disabled]="busy()"
       >
-        Menú
+        Nueva investigación
       </button>
-      <div>
-        <span class="eyebrow">AXIZ / PAYMENT OPERATIONS</span>
-        <h1>Procesamiento de pagos</h1>
-        <p>Se sigue cada decisión, desde la validación hasta la captura.</p>
+      <div class="nav-title">
+        CONVERSACIONES <span>{{ conversations().length }}</span>
       </div>
-      <span class="version">Entorno de demostración</span>
-    </header>
-    @if (error()) {
-      <div class="alert error" role="alert">{{ error() }}</div>
-    }
-    @if (notice()) {
-      <div class="alert" role="status">{{ notice() }}</div>
-    }
-    <section class="summary" aria-label="Resumen del pago">
-      <div>
-        <span class="eyebrow">ESTADO ACTUAL</span
-        ><strong
-          [class.success]="status() === 'CAPTURED'"
-          [class.warning]="review()"
-          >{{ label(status()) }}</strong
-        >
-      </div>
-      <div>
-        <span class="eyebrow">IMPORTE</span
-        ><strong
-          >{{ payment.amountMinor / 100 | number: '1.2-2' }}
-          <small>{{ payment.currency }}</small></strong
-        >
-      </div>
-      <div>
-        <span class="eyebrow">ADQUIRENTE</span
-        ><strong>{{ currentState()?.acquirer ?? 'Por determinar' }}</strong>
-      </div>
-      <div>
-        <span class="eyebrow">SEGUIMIENTO</span
-        ><strong class="connection"
-          ><span class="status-dot" [class.online]="busy()"></span
-          >{{ connection() }}</strong
-        >
-      </div>
-    </section>
-    <div class="workspace">
-      <section class="panel compose">
-        <div class="panel-heading">
-          <div>
-            <span class="eyebrow">SOLICITUD</span>
-            <h2>Configurar el pago</h2>
-          </div>
-          <span class="tag">SSE</span>
-        </div>
-        <form #paymentForm="ngForm" (ngSubmit)="start()">
-          <label
-            >Identificador del pago<input
-              name="id"
-              [(ngModel)]="payment.id"
-              required
-              pattern="[a-zA-Z0-9-]{1,64}"
-              [disabled]="busy() || !!snapshot()"
-              autocomplete="off"
-          /></label>
-          <div class="form-row">
-            <label
-              >Importe en unidades menores<input
-                name="amount"
-                type="number"
-                [(ngModel)]="payment.amountMinor"
-                required
-                min="1"
-                max="100000000"
-                step="1"
-                [disabled]="busy() || !!snapshot()" /></label
-            ><label
-              >Moneda<select
-                name="currency"
-                [(ngModel)]="payment.currency"
-                [disabled]="busy() || !!snapshot()"
-              >
-                <option>PEN</option>
-                <option>USD</option>
-              </select></label
-            >
-          </div>
-          <span class="field-label">Escenario de procesamiento</span>
-          <div class="scenario-list">
-            @for (scenario of scenarios; track scenario.value) {
-              <button
-                type="button"
-                [class.selected]="payment.scenario === scenario.value"
-                [disabled]="busy() || !!snapshot()"
-                (click)="choose(scenario.value)"
-                [attr.aria-pressed]="payment.scenario === scenario.value"
-              >
-                <span class="radio"></span
-                ><span
-                  ><strong>{{ scenario.label }}</strong
-                  ><small>{{ scenario.description }}</small></span
-                >
-              </button>
-            }
-          </div>
-          <details class="credentials">
-            <summary>Acceso al entorno</summary>
-            <label
-              >Clave de acceso<input
-                name="key"
-                type="password"
-                [(ngModel)]="apiKey"
-                [disabled]="busy()"
-                autocomplete="off" /></label
-            ><small
-              >Se utiliza en esta sesión y no se guarda en el navegador.</small
-            >
-          </details>
+      <nav class="conversation-list" aria-label="Conversaciones guardadas">
+        @for (item of conversations(); track item.id) {
           <button
-            class="button primary full"
-            type="submit"
-            [disabled]="paymentForm.invalid || busy() || !!snapshot()"
+            [class.active]="item.id === conversationId"
+            (click)="open(item)"
+            [disabled]="busy()"
           >
-            {{
-              busy()
-                ? 'Procesamiento en curso…'
-                : 'Procesar con seguimiento en
-            vivo'
-            }}
+            <strong>{{ item.payment_id }}</strong
+            ><small>{{ item.id }}</small
+            ><span class="conversation-state">{{
+              item.status === 'AWAITING_REVIEW'
+                ? 'Revisión pendiente'
+                : item.status === 'COMPLETED'
+                  ? 'Completada'
+                  : item.status === 'FAILED'
+                    ? 'Requiere recuperación'
+                    : 'En proceso'
+            }}</span>
           </button>
-          @if (busy()) {
-            <button type="button" class="button full" (click)="disconnect()">
-              Detener seguimiento local
-            </button>
-          }
-        </form>
-        <div class="lookup">
-          <span class="eyebrow">RECUPERAR UN PAGO</span>
-          <div>
-            <input
-              aria-label="Identificador a consultar"
-              [(ngModel)]="lookupId"
-              placeholder="Identificador del pago"
-            /><button
-              class="button"
-              (click)="open(lookupId)"
-              [disabled]="busy() || !lookupId.trim()"
-            >
-              Consultar
-            </button>
-          </div>
-        </div>
-      </section>
-      <section class="panel execution">
-        <div class="panel-heading">
-          <div>
-            <span class="eyebrow">EJECUCIÓN</span>
-            <h2>Recorrido del pago</h2>
-          </div>
-          <span class="tag" [class.live]="busy()">{{
-            busy() ? 'En vivo' : timeline().length + ' eventos'
-          }}</span>
-        </div>
-        @if (review()) {
-          <div class="approval" role="status">
-            <span class="eyebrow">DECISIÓN REQUERIDA</span>
-            <h3>Se necesita una revisión humana</h3>
-            <p>
-              El pago permanece pausado. Al aprobarse, se continúa con
-              autorización y captura; al rechazarse, se finaliza sin autorizar.
-            </p>
-            <div>
-              <button
-                class="button primary"
-                [disabled]="busy()"
-                (click)="decide('APPROVED')"
-              >
-                Aprobar y continuar</button
-              ><button
-                class="button danger"
-                [disabled]="busy()"
-                (click)="decide('REJECTED')"
-              >
-                Rechazar pago
-              </button>
-            </div>
-          </div>
+        } @empty {
+          <p>Las investigaciones se guardan al enviar la primera pregunta.</p>
         }
-        <div class="flow-stages">
-          <span [class.done]="timeline().length > 0 || snapshot()"
-            >Validación</span
-          ><span [class.done]="!!currentState()?.risk">Riesgo y comercio</span
-          ><span [class.current]="review()" [class.done]="terminal()"
-            >Decisión</span
-          ><span [class.done]="!!currentState()?.acquirer">Autorización</span
-          ><span
-            [class.done]="status() === 'CAPTURED' || status() === 'COMPENSATED'"
-            >Liquidación</span
-          >
-        </div>
-        <div
-          class="timeline"
-          aria-label="Eventos de ejecución"
-          aria-live="polite"
+      </nav>
+      <details class="access">
+        <summary>Acceso al entorno</summary>
+        <label
+          >Tenant<input
+            [(ngModel)]="credentials.tenant"
+            [disabled]="busy()" /></label
+        ><label
+          >Clave de acceso<input
+            type="password"
+            [(ngModel)]="credentials.key"
+            [disabled]="busy()"
+            autocomplete="off" /></label
+        ><button class="button" (click)="connect()" [disabled]="busy()">
+          Conectar
+        </button>
+      </details>
+      <button
+        class="secondary-nav"
+        (click)="legacy.set(true)"
+        [disabled]="busy()"
+      >
+        Laboratorio de flujos deterministas
+      </button>
+      <div class="sidebar-footer">
+        <i [class.online]="connected()"></i
+        >{{ connected() ? 'Servicio conectado' : 'Sin conexión'
+        }}<small>Quarkus · LangGraph4j · LangChain4j</small>
+      </div>
+    </aside>
+    <main id="chat-main">
+      <header class="topbar">
+        <button
+          class="button menu"
+          (click)="sidebarOpen.set(true)"
+          aria-label="Abrir navegación"
         >
-          @for (event of timeline(); track $index) {
-            <article class="timeline-row">
-              <span class="timeline-dot"></span>
-              <div>
-                <strong>{{ nodeLabel(event.node) }}</strong
-                ><small
-                  >{{ label(event.state.status) }}
-                  @if (event.state.acquirer) {
-                    · {{ event.state.acquirer }}
-                    @if (event.state.attempt) {
-                      · intento {{ event.state.attempt }}
-                    }
+          Menú
+        </button>
+        <div>
+          <span class="eyebrow">PAYMENT OPERATIONS</span>
+          <h1>Copilot de investigación</h1>
+        </div>
+        <div class="model-status">
+          <i [class.online]="connected()"></i
+          ><strong>{{
+            runtime().provider === 'FIXTURE'
+              ? 'Sin LLM · modo de prueba'
+              : runtime().chatModel || 'Conectando'
+          }}</strong
+          ><small>Herramientas de solo lectura</small>
+        </div>
+        <button
+          class="button trace-toggle"
+          (click)="traceOpen.set(!traceOpen())"
+        >
+          {{ traceOpen() ? 'Ocultar' : 'Ver' }} ejecución
+        </button>
+      </header>
+      @if (runtime().provider === 'FIXTURE') {
+        <div class="fixture-banner" role="status">
+          <strong>Modo de prueba sin IA generativa.</strong> Se utilizan
+          respuestas y vectores deterministas para verificar el flujo. Se
+          configura AI_PROVIDER=OPENAI para conversar con un modelo real.
+        </div>
+      }
+      <div class="scope-bar">
+        <div>
+          <span class="eyebrow">PAGO EN INVESTIGACIÓN</span
+          ><select
+            aria-label="Pago en investigación"
+            [(ngModel)]="paymentId"
+            (ngModelChange)="changePayment()"
+            [disabled]="busy() || awaiting()"
+          >
+            @for (payment of payments(); track payment.id) {
+              <option [value]="payment.id">
+                {{ payment.id }} · {{ payment.status }} ·
+                {{ payment.amount | number: '1.2-2' }} {{ payment.currency }}
+              </option>
+            }
+          </select>
+        </div>
+        <span class="scope-note"
+          >Se investigan hechos y se recomiendan acciones.<br />No se capturan,
+          reembolsan ni reintentan pagos.</span
+        >
+      </div>
+      @if (error()) {
+        <div class="alert error" role="alert">{{ error() }}</div>
+      }
+      @if (notice()) {
+        <div class="alert" role="status">{{ notice() }}</div>
+      }
+      <div class="workspace" [class.with-trace]="traceOpen()">
+        <section class="chat-column">
+          <div class="chat-messages" aria-label="Mensajes de la investigación">
+            @if (!messages().length) {
+              <div class="welcome">
+                <span class="welcome-mark">AXIZ / COPILOT</span>
+                <h2>¿Qué necesitas investigar?</h2>
+                <p>
+                  Se combinan datos operacionales, herramientas y playbooks para
+                  explicar lo ocurrido con un pago.
+                </p>
+                <div class="suggestions">
+                  @for (item of suggestions; track item.label; let i = $index) {
+                    <button (click)="suggest(i)" [disabled]="busy()">
+                      <span>{{ item.label }}</span
+                      ><small>{{ item.payment }}</small>
+                      <p>{{ item.question }}</p>
+                    </button>
                   }
-                </small>
+                </div>
+                <div class="welcome-footnote">
+                  Se puede preguntar por un rechazo, un timeout o una
+                  liquidación. Las respuestas muestran la evidencia utilizada.
+                </div>
               </div>
-              <time>{{ event.at }}</time>
-            </article>
-          } @empty {
-            <div class="empty">
-              <div class="empty-symbol">PG</div>
-              <h3>
-                {{
-                  snapshot()
-                    ? 'Estado recuperado'
-                    : 'El recorrido aparecerá aquí'
-                }}
-              </h3>
+            }
+            @for (message of messages(); track message.id) {
+              <article class="message" [class.user]="message.role === 'user'">
+                <div class="avatar">
+                  {{ message.role === 'user' ? 'OP' : 'AX' }}
+                </div>
+                <div class="message-body">
+                  <div class="message-heading">
+                    <strong>{{
+                      message.role === 'user' ? 'Operador' : 'Axiz Copilot'
+                    }}</strong>
+                    @if (message.status === 'AWAITING_REVIEW') {
+                      <span class="pill warning">Pendiente de revisión</span>
+                    }
+                    @if (message.status === 'INTERRUPTED') {
+                      <span class="pill warning">Seguimiento interrumpido</span>
+                    }
+                  </div>
+                  @if (message.text) {
+                    <div class="message-text">{{ message.text }}</div>
+                  } @else {
+                    <div class="thinking" role="status">
+                      <span class="pulse"></span>{{ stage() }}
+                    </div>
+                  }
+                  @if (message.report) {
+                    <details class="report">
+                      <summary>
+                        Informe verificado y evidencia
+                        <span>{{ message.report.confidence }}</span>
+                      </summary>
+                      <div class="report-content">
+                        <p class="report-disposition">
+                          {{ message.report.disposition }}
+                        </p>
+                        @for (
+                          evidence of message.report.evidence;
+                          track $index
+                        ) {
+                          <div class="evidence">
+                            <code>{{ evidence.sourceRef }}</code>
+                            <p>{{ evidence.detail }}</p>
+                          </div>
+                        }
+                        <h4>Acciones recomendadas</h4>
+                        <ul>
+                          @for (
+                            action of message.report.recommendedActions;
+                            track $index
+                          ) {
+                            <li>{{ action }}</li>
+                          }
+                        </ul>
+                      </div>
+                    </details>
+                  }
+                  @if (message.sources?.length) {
+                    <details class="sources">
+                      <summary>
+                        Conocimiento recuperado ·
+                        {{ message.sources!.length }} fuentes
+                      </summary>
+                      @for (source of message.sources; track source.id) {
+                        <div class="source">
+                          <strong>{{ source.source }}</strong
+                          ><small
+                            >Similitud
+                            {{ source.score | number: '1.2-2' }}</small
+                          >
+                          <p>{{ source.text }}</p>
+                          <code>{{ source.id }}</code>
+                        </div>
+                      }
+                    </details>
+                  }
+                </div>
+              </article>
+            }
+          </div>
+          @if (awaiting()) {
+            <section class="review-panel" aria-label="Revisión humana">
+              <span class="eyebrow">INTERVENCIÓN HUMANA</span>
+              <h3>Se necesita revisar el informe</h3>
               <p>
-                {{
-                  snapshot()
-                    ? 'Se puede consultar cada estado guardado en el
-              historial inferior.'
-                    : 'Se selecciona un escenario y se procesa el
-              pago para observar sus decisiones en tiempo real.'
-                }}
+                El grafo permanece pausado y su estado está guardado en
+                PostgreSQL. La aprobación valida el informe; no autoriza una
+                operación financiera.
               </p>
+              <label
+                >Credencial del revisor<input
+                  type="password"
+                  [(ngModel)]="credentials.reviewer"
+                  autocomplete="off"
+                  placeholder="Clave del revisor"
+              /></label>
+              <div>
+                <button
+                  class="button primary"
+                  (click)="review('APPROVED')"
+                  [disabled]="busy() || !credentials.reviewer"
+                >
+                  Aprobar informe y continuar</button
+                ><button
+                  class="button danger"
+                  (click)="review('REJECTED')"
+                  [disabled]="busy() || !credentials.reviewer"
+                >
+                  Rechazar informe
+                </button>
+              </div>
+            </section>
+          }
+          @if (activeRun()?.status === 'FAILED' && !busy()) {
+            <div class="recovery">
+              <p>
+                Se conserva un checkpoint de esta investigación. Se debe
+                recuperar el nodo pendiente en lugar de enviar el mismo turno
+                otra vez.
+              </p>
+              <button class="button" (click)="retry()">
+                Recuperar investigación
+              </button>
             </div>
           }
-        </div>
-        @if (snapshot()) {
-          <div class="outcome">
-            <div>
-              <span class="eyebrow">ÚLTIMO ESTADO GUARDADO</span
-              ><strong>{{ snapshot()?.state?.id }}</strong
+          <div class="composer-wrap">
+            <div class="composer">
+              <textarea
+                aria-label="Pregunta sobre el pago"
+                [(ngModel)]="question"
+                (keydown)="keydown($event)"
+                rows="2"
+                maxlength="4000"
+                placeholder="Pregunta sobre el pago seleccionado…"
+                [disabled]="busy() || awaiting()"
+              ></textarea>
+              <div class="composer-actions">
+                <label class="review-option"
+                  ><input
+                    type="checkbox"
+                    [(ngModel)]="forceReview"
+                    [disabled]="busy() || awaiting()"
+                  />
+                  Solicitar revisión humana</label
+                >
+                @if (busy()) {
+                  <button class="button" (click)="stop()">
+                    Detener seguimiento
+                  </button>
+                } @else {
+                  <button
+                    class="button primary"
+                    (click)="send()"
+                    [disabled]="!question.trim() || !connected() || awaiting()"
+                  >
+                    Enviar pregunta
+                  </button>
+                }
+              </div>
+            </div>
+            <div class="composer-caption">
+              <span>{{
+                busy()
+                  ? stage()
+                  : 'Enter para enviar · Shift + Enter para nueva línea'
+              }}</span
               ><small
-                >Siguiente paso: {{ nodeLabel(snapshot()!.nextNode) }}</small
+                >La respuesta se apoya en evidencia; puede requerir revisión
+                humana.</small
               >
             </div>
-            <button
-              class="button"
-              (click)="open(payment.id)"
-              [disabled]="busy()"
-            >
-              Actualizar estado
-            </button>
-            @if (!terminal() && !review()) {
-              <button class="button" (click)="retry()" [disabled]="busy()">
-                Reanudar nodo pendiente
-              </button>
-            }
           </div>
-        }
-      </section>
-    </div>
-    @if (history().length) {
-      <section class="panel history-panel">
-        <div class="panel-heading">
-          <div>
-            <span class="eyebrow">TRAZABILIDAD</span>
-            <h2>Estados guardados</h2>
-            <p>
-              Se consulta un estado anterior sin repetir operaciones de pago.
-            </p>
-          </div>
-          <span class="tag">{{ history().length }} checkpoints</span>
-        </div>
-        <div class="history-grid">
-          <div class="checkpoint-list">
-            @for (item of history(); track item.checkpointId) {
-              <button
-                (click)="selected.set(item)"
-                [class.active]="selected()?.checkpointId === item.checkpointId"
-              >
-                <span>{{ nodeLabel(item.node ?? '') }}</span
-                ><small>{{ item.state.status }}</small
-                ><code>{{ item.checkpointId.slice(0, 12) }}</code>
-              </button>
-            }
-          </div>
-          <div class="checkpoint-detail">
-            @if (selected()) {
-              <h3>Estado del checkpoint</h3>
-              <pre>{{ selected() | json }}</pre>
-            } @else {
+        </section>
+        @if (traceOpen()) {
+          <aside class="trace-panel">
+            <div class="trace-header">
+              <span class="eyebrow">EJECUCIÓN DEL GRAFO</span>
+              <h2>Actividad observable</h2>
               <p>
-                Se selecciona un checkpoint para consultar su estado completo.
+                Se muestran etapas y herramientas, sin razonamiento interno del
+                modelo.
               </p>
+            </div>
+            <div class="trace-events">
+              @for (trace of traces(); track $index) {
+                <div class="trace-event">
+                  <i [class.done]="trace.status === 'completed'"></i>
+                  <div>
+                    <strong>{{ nodeLabel(trace.name) }}</strong
+                    ><small
+                      >{{
+                        trace.status === 'completed' ? 'Completado' : 'En curso'
+                      }}
+                      @if (trace.duration !== undefined) {
+                        · {{ trace.duration }} ms
+                      }
+                    </small>
+                  </div>
+                </div>
+              } @empty {
+                <p>La actividad aparece al iniciar una investigación.</p>
+              }
+            </div>
+            @if (activeRun()) {
+              <div class="run-meta">
+                <span class="eyebrow">EJECUCIÓN ACTUAL</span
+                ><code>{{ activeRun()!.id }}</code>
+                <p>{{ activeRun()!.status }}</p>
+                <button
+                  class="button"
+                  (click)="checkpoints()"
+                  [disabled]="busy()"
+                >
+                  Consultar checkpoints
+                </button>
+              </div>
             }
-          </div>
-        </div>
-      </section>
-    }
-  </main>
-</div>
+            @if (checkpointData().length) {
+              <details class="checkpoint-data">
+                <summary>Historial persistido</summary>
+                <pre>{{ checkpointData() | json }}</pre>
+              </details>
+            }
+          </aside>
+        }
+      </div>
+    </main>
+  </div>
+}

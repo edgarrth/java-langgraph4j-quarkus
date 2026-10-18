@@ -18,7 +18,7 @@ for item in 'NORMAL CAPTURED' 'DECLINE REJECTED' 'FAILOVER CAPTURED' 'COMPENSATE
   printf 'Verificado: %s\n' "$scenario"
 done
 request -N "$base_url/payments/stream" --data "$(jq -nc --arg id "$run_id-stream" '{id:$id,amountMinor:100,currency:"USD",scenario:"NORMAL"}')" | tee /tmp/axiz-stream-"$run_id".txt
-rg 'event:result|event: result' /tmp/axiz-stream-"$run_id".txt >/dev/null
+grep -E 'event:result|event: result' /tmp/axiz-stream-"$run_id".txt >/dev/null
 rm /tmp/axiz-stream-"$run_id".txt
 printf 'Pruebas HTTP finalizadas.\n'
 unauthorized=$(curl --silent --output /dev/null --write-out '%{http_code}' "$base_url/payments/$run_id-NORMAL")

@@ -1,9 +1,9 @@
 {
   "name": "axiz-payment-graph-frontend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
-    "start": "ng serve --host 0.0.0.0 --port 4200 --proxy-config proxy.conf.json",
+    "start": "ng serve --host 127.0.0.1 --port 4200 --proxy-config proxy.conf.json",
     "build": "ng build",
     "verify": "ng build --configuration production",
     "format": "prettier --write \"src/**/*.{ts,html,css}\" \"tests/*.ts\" \"*.json\"",
@@ -27,7 +27,7 @@
     "@angular/build": "22.2.2"
   },
   "engines": {
-    "node": ">=20.19.0 <23 || >=24.0.0"
+    "node": "^24.15.0 || >=26.0.0"
   },
   "type": "module"
 }

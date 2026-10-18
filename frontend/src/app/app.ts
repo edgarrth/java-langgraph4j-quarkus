@@ -1,270 +1,417 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import {
+  Component,
+  computed,
+  inject,
+  signal,
+  effect,
+  HostListener,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { JsonPipe, DecimalPipe } from '@angular/common';
-import { ApiService } from './services/api.service';
-import { Payment, Scenario, Snapshot, TimelineEvent } from './models';
+import { DecimalPipe, JsonPipe } from '@angular/common';
+import {
+  CopilotApi,
+  Credentials,
+  Conversation,
+  PaymentRow,
+  Run,
+  Report,
+  KnowledgeSource,
+  MessageRow,
+} from './services/copilot-api.service';
+import { PaymentConsole } from './payment-console';
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  runId?: string;
+  report?: Report;
+  sources?: KnowledgeSource[];
+  status?: string;
+}
+interface Trace {
+  type: string;
+  name: string;
+  status: string;
+  duration?: number;
+}
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [FormsModule, JsonPipe, DecimalPipe],
+  imports: [FormsModule, DecimalPipe, JsonPipe, PaymentConsole],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
 export class AppComponent {
-  readonly api = inject(ApiService);
+  readonly api = inject(CopilotApi);
+  readonly messages = signal<ChatMessage[]>([]);
+  readonly conversations = signal<Conversation[]>([]);
+  readonly payments = signal<PaymentRow[]>([]);
+  readonly runtime = signal({ provider: '', chatModel: '', version: '' });
   readonly busy = signal(false);
+  readonly connected = signal(false);
   readonly error = signal('');
   readonly notice = signal('');
-  readonly online = signal(false);
+  readonly traces = signal<Trace[]>([]);
+  readonly activeRun = signal<Run | null>(null);
+  readonly traceOpen = signal(false);
   readonly sidebarOpen = signal(false);
-  readonly snapshot = signal<Snapshot | null>(null);
-  readonly history = signal<Snapshot[]>([]);
-  readonly timeline = signal<TimelineEvent[]>([]);
-  readonly selected = signal<Snapshot | null>(null);
-  readonly connection = signal('Sin conexión activa');
-  readonly recent = signal<string[]>(
-    JSON.parse(localStorage.getItem('axiz-payment-ids') || '[]') as string[],
+  readonly legacy = signal(false);
+  readonly awaiting = computed(
+    () => this.activeRun()?.status === 'AWAITING_REVIEW',
   );
-  readonly review = computed(() => this.snapshot()?.nextNode === 'approval');
-  readonly terminal = computed(() => this.snapshot()?.nextNode === '__END__');
-  readonly currentState = computed(
-    () => this.snapshot()?.state ?? this.timeline().at(-1)?.state,
-  );
-  readonly status = computed(() => this.currentState()?.status ?? 'LISTO');
-  readonly scenarios: {
-    value: Scenario;
-    label: string;
-    description: string;
-  }[] = [
+  readonly stage = signal('Listo para investigar');
+  credentials: Credentials = {
+    tenant: 'tenant-pe-01',
+    key: 'local-demo-key',
+    reviewer: '',
+  };
+  paymentId = 'pay_1002';
+  conversationId = 'chat-' + crypto.randomUUID().slice(0, 12);
+  question = '';
+  private controller?: AbortController;
+  private assistantId = '';
+  readonly suggestions = [
     {
-      value: 'NORMAL',
-      label: 'Pago aprobado',
-      description: 'Riesgo bajo, autorización y captura.',
+      label: 'Explicar un rechazo',
+      payment: 'pay_1002',
+      question:
+        '¿Por qué fue rechazado este pago? Se deben distinguir hechos comprobados de posibles causas.',
     },
     {
-      value: 'REVIEW',
-      label: 'Revisión humana',
-      description: 'Se espera una decisión antes de autorizar.',
+      label: 'Investigar un timeout',
+      payment: 'pay_1003',
+      question:
+        '¿Es seguro reintentar esta captura? Revisa la secuencia de eventos y el playbook.',
     },
     {
-      value: 'DECLINE',
-      label: 'Riesgo alto',
-      description: 'Se rechaza el pago antes de autorizar.',
-    },
-    {
-      value: 'FAILOVER',
-      label: 'Adquirente alterno',
-      description: 'Se utiliza el secundario ante indisponibilidad.',
-    },
-    {
-      value: 'COMPENSATE',
-      label: 'Compensación',
-      description: 'Se anula la autorización tras fallar la captura.',
+      label: 'Comprobar liquidación',
+      payment: 'pay_1004',
+      question:
+        '¿Este pago ya fue liquidado? Explica la diferencia entre captura y liquidación con evidencia.',
     },
   ];
-  payment: Payment = this.newPayment();
-  apiKey = 'local-demo-key';
-  lookupId = '';
-  private controller?: AbortController;
-  constructor() {
-    void this.api.health().then((value) => this.online.set(value));
+  private autoFollow = true;
+  @HostListener('window:scroll') onScroll(): void {
+    this.autoFollow =
+      document.documentElement.scrollHeight -
+        window.innerHeight -
+        window.scrollY <
+      220;
   }
-  newPayment(): Payment {
-    return {
-      id: 'pay-' + crypto.randomUUID().slice(0, 8),
-      amountMinor: 15000,
-      currency: 'PEN',
-      scenario: 'NORMAL',
-    };
+  private readonly scrollEffect = effect(() => {
+    const messages = this.messages();
+    if (messages.length && this.autoFollow)
+      requestAnimationFrame(() =>
+        window.scrollTo({
+          top: document.documentElement.scrollHeight,
+          behavior: 'auto',
+        }),
+      );
+  });
+  constructor() {
+    void this.connect();
+  }
+  async connect(): Promise<void> {
+    this.error.set('');
+    try {
+      this.runtime.set(await this.api.json('/runtime', this.credentials));
+      this.payments.set(
+        await this.api.json<PaymentRow[]>('/payments', this.credentials),
+      );
+      this.conversations.set(
+        await this.api.json<Conversation[]>('/conversations', this.credentials),
+      );
+      this.connected.set(true);
+    } catch (error) {
+      this.connected.set(false);
+      this.error.set(
+        error instanceof Error
+          ? error.message
+          : 'No se pudo conectar al servicio.',
+      );
+    }
   }
   reset(): void {
     if (this.busy()) return;
-    this.payment = this.newPayment();
-    this.snapshot.set(null);
-    this.timeline.set([]);
-    this.history.set([]);
-    this.selected.set(null);
+    this.messages.set([]);
+    this.activeRun.set(null);
+    this.traces.set([]);
     this.error.set('');
     this.notice.set('');
+    this.conversationId = 'chat-' + crypto.randomUUID().slice(0, 12);
+    this.question = '';
+    this.sidebarOpen.set(false);
   }
-  choose(scenario: Scenario): void {
-    this.payment.scenario = scenario;
+  changePayment(): void {
+    if (this.messages().length) this.reset();
   }
-  remember(id: string): void {
-    this.recent.update((ids) =>
-      [id, ...ids.filter((value) => value !== id)].slice(0, 20),
-    );
-    localStorage.setItem('axiz-payment-ids', JSON.stringify(this.recent()));
+  suggest(index: number): void {
+    const item = this.suggestions[index];
+    if (!item) return;
+    this.reset();
+    this.paymentId = item.payment;
+    this.question = item.question;
   }
-  async start(): Promise<void> {
+  async open(conversation: Conversation): Promise<void> {
     if (this.busy()) return;
     this.busy.set(true);
     this.error.set('');
+    this.activeRun.set(null);
+    this.traces.set([]);
+    try {
+      this.conversationId = conversation.id;
+      this.paymentId = conversation.payment_id;
+      const rows = await this.api.json<MessageRow[]>(
+        '/conversations/' + encodeURIComponent(conversation.id) + '/messages',
+        this.credentials,
+      );
+      this.messages.set(
+        rows.map((m, i) => ({
+          id: 'stored-' + i,
+          role: m.role,
+          text: m.content,
+          runId: m.run_id,
+        })),
+      );
+      if (rows.length) {
+        const run = await this.api.json<Run>(
+          '/runs/' + rows.at(-1)!.run_id,
+          this.credentials,
+        );
+        this.activeRun.set(run);
+        if (run.report) {
+          if (rows.at(-1)?.role === 'assistant')
+            this.update(rows.length - 1, { report: run.report });
+          else
+            this.messages.update((list) => [
+              ...list,
+              {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                text: run.report!.summary,
+                report: run.report,
+                runId: run.id,
+                status: run.status,
+              },
+            ]);
+        }
+      }
+      this.sidebarOpen.set(false);
+    } catch (error) {
+      this.error.set(
+        error instanceof Error
+          ? error.message
+          : 'No se pudo recuperar la conversación.',
+      );
+    } finally {
+      this.busy.set(false);
+    }
+  }
+  private update(index: number, patch: Partial<ChatMessage>): void {
+    this.messages.update((list) =>
+      list.map((m, i) => (i === index ? { ...m, ...patch } : m)),
+    );
+  }
+  private patch(patch: Partial<ChatMessage>): void {
+    this.messages.update((list) =>
+      list.map((m) => (m.id === this.assistantId ? { ...m, ...patch } : m)),
+    );
+  }
+  async send(): Promise<void> {
+    if (
+      this.busy() ||
+      this.awaiting() ||
+      !this.question.trim() ||
+      !this.connected()
+    )
+      return;
+    this.autoFollow = true;
+    const text = this.question.trim();
+    this.question = '';
+    this.error.set('');
     this.notice.set('');
-    this.timeline.set([]);
-    this.history.set([]);
-    this.selected.set(null);
-    this.snapshot.set(null);
-    this.connection.set('Conectando');
+    this.traces.set([]);
+    this.activeRun.set(null);
+    this.assistantId = crypto.randomUUID();
+    this.messages.update((list) => [
+      ...list,
+      { id: crypto.randomUUID(), role: 'user', text },
+      { id: this.assistantId, role: 'assistant', text: '', status: 'RUNNING' },
+    ]);
+    await this.execute(
+      '/payments/' +
+        encodeURIComponent(this.paymentId) +
+        '/investigations/stream',
+      {
+        conversationId: this.conversationId,
+        requestId: crypto.randomUUID(),
+        question: text,
+        reviewRequested: this.forceReview,
+      },
+    );
+  }
+  forceReview = false;
+  private event(type: string, data: unknown): void {
+    const event = data as Record<string, unknown>;
+    if (type === 'run') {
+      this.patch({ runId: String(event['runId']) });
+      this.activeRun.set({
+        id: String(event['runId']),
+        status: 'RUNNING',
+        conversation_id: this.conversationId,
+        payment_id: this.paymentId,
+        provider: String(event['provider']),
+      });
+    } else if (type === 'token') {
+      const old = this.messages().find((m) => m.id === this.assistantId);
+      this.patch({ text: (old?.text ?? '') + String(event['text']) });
+      this.stage.set('Redactando respuesta con evidencia');
+    } else if (type === 'sources')
+      this.patch({ sources: event['sources'] as KnowledgeSource[] });
+    else if (type === 'stage' || type === 'tool') {
+      const name = String(event['node'] ?? event['name']);
+      const status = String(event['status']);
+      this.traces.update((items) =>
+        [
+          ...items,
+          {
+            type,
+            name,
+            status,
+            duration: event['durationMs'] as number | undefined,
+          },
+        ].slice(-60),
+      );
+      if (status === 'started') this.stage.set(this.nodeLabel(name));
+    } else if (type === 'result') {
+      const run = data as Run;
+      this.activeRun.set(run);
+      const old = this.messages().find((m) => m.id === this.assistantId);
+      this.patch({
+        runId: run.id,
+        status: run.status,
+        report: run.report,
+        text:
+          run.narrative ||
+          old?.text ||
+          run.report?.summary ||
+          'Se recuperó el estado de la investigación.',
+      });
+      this.stage.set(
+        run.status === 'AWAITING_REVIEW'
+          ? 'Se requiere revisión humana'
+          : 'Investigación completada',
+      );
+    }
+  }
+  private async execute(path: string, body: unknown): Promise<void> {
+    this.busy.set(true);
     this.controller = new AbortController();
-    this.remember(this.payment.id);
     try {
       await this.api.stream(
-        { ...this.payment },
-        this.apiKey,
+        path,
+        this.credentials,
+        body,
         this.controller.signal,
-        (node) => {
-          this.connection.set('Recibiendo eventos');
-          this.timeline.update((events) => [
-            ...events,
-            { ...node, at: new Date().toLocaleTimeString('es-PE') },
-          ]);
-        },
-        (result) => this.snapshot.set(result),
+        (type, data) => this.event(type, data),
       );
-      this.connection.set('Seguimiento finalizado');
-      this.history.set(await this.api.history(this.payment.id, this.apiKey));
+      this.conversations.set(
+        await this.api.json<Conversation[]>('/conversations', this.credentials),
+      );
     } catch (error) {
-      this.connection.set('Conexión interrumpida');
       this.error.set(
         this.controller.signal.aborted
           ? 'Se detuvo el seguimiento local.'
           : error instanceof Error
             ? error.message
-            : 'No se pudo ejecutar el pago.',
+            : 'No se pudo completar la investigación.',
       );
-      try {
-        this.snapshot.set(await this.api.state(this.payment.id, this.apiKey));
-        this.notice.set('Se recuperó el último estado guardado.');
-      } catch {
-        this.notice.set(
-          'Se puede consultar el pago por su identificador cuando el servicio esté disponible.',
-        );
+      const id = this.activeRun()?.id;
+      if (id) {
+        try {
+          const run = await this.api.json<Run>('/runs/' + id, this.credentials);
+          this.activeRun.set(run);
+          this.patch({ report: run.report, status: run.status });
+          this.notice.set(
+            'Se recuperó el último estado guardado. No se ejecutaron operaciones financieras.',
+          );
+        } catch {
+          this.notice.set(
+            'Se puede recuperar la conversación cuando el servicio esté disponible.',
+          );
+        }
       }
+      this.patch({ status: 'INTERRUPTED' });
     } finally {
       this.busy.set(false);
     }
   }
-  async open(id: string): Promise<void> {
-    if (this.busy() || !id.trim()) return;
-    this.busy.set(true);
-    this.error.set('');
-    this.notice.set('');
-    this.timeline.set([]);
-    this.selected.set(null);
-    try {
-      const result = await this.api.state(id.trim(), this.apiKey);
-      this.snapshot.set(result);
-      this.payment = {
-        id: result.state.id,
-        amountMinor: result.state.amountMinor,
-        currency: result.state.currency,
-        scenario: result.state.scenario,
-      };
-      this.history.set(await this.api.history(id.trim(), this.apiKey));
-      this.remember(id.trim());
-      this.sidebarOpen.set(false);
-      this.connection.set('Estado recuperado');
-    } catch (error) {
-      this.error.set(
-        error instanceof Error
-          ? error.message
-          : 'No se pudo consultar el pago.',
-      );
-    } finally {
-      this.busy.set(false);
-    }
-  }
-  async decide(approval: 'APPROVED' | 'REJECTED'): Promise<void> {
-    if (!this.review() || this.busy()) return;
-    this.busy.set(true);
-    this.error.set('');
-    try {
-      this.snapshot.set(
-        await this.api.resume(this.payment.id, this.apiKey, approval),
-      );
-      this.history.set(await this.api.history(this.payment.id, this.apiKey));
-      this.notice.set(
-        approval === 'APPROVED'
-          ? 'Se aprobó la revisión y continuó el procesamiento.'
-          : 'Se rechazó el pago.',
-      );
-    } catch (error) {
-      this.error.set(
-        error instanceof Error
-          ? error.message
-          : 'No se pudo resolver la revisión.',
-      );
-    } finally {
-      this.busy.set(false);
-    }
+  async review(decision: 'APPROVED' | 'REJECTED'): Promise<void> {
+    const run = this.activeRun();
+    if (!run || !this.credentials.reviewer || this.busy()) return;
+    this.assistantId = this.messages().at(-1)?.id ?? '';
+    this.patch({ text: '' });
+    await this.execute('/runs/' + run.id + '/review/stream', { decision });
   }
   async retry(): Promise<void> {
-    this.busy.set(true);
-    this.error.set('');
-    try {
-      this.snapshot.set(await this.api.retry(this.payment.id, this.apiKey));
-      this.history.set(await this.api.history(this.payment.id, this.apiKey));
-    } catch (error) {
-      this.error.set(
-        error instanceof Error ? error.message : 'No se pudo reanudar.',
-      );
-    } finally {
-      this.busy.set(false);
-    }
+    const run = this.activeRun();
+    if (!run || this.busy()) return;
+    this.assistantId = this.messages().at(-1)?.id ?? '';
+    this.patch({ text: '' });
+    await this.execute('/runs/' + run.id + '/retry/stream', {});
   }
-  disconnect(): void {
+  stop(): void {
     this.controller?.abort();
     this.notice.set(
-      'Se detuvo el seguimiento local. La ejecución puede continuar en el servidor; se debe consultar su estado.',
+      'Se cerró la lectura local; se debe consultar el estado antes de repetir la solicitud.',
     );
   }
-  label(status: string): string {
-    return (
-      (
-        {
-          LISTO: 'Listo para procesar',
-          VALIDATED: 'Solicitud validada',
-          DECIDED: 'Riesgo evaluado',
-          AUTHORIZED: 'Pago autorizado',
-          CAPTURE_FAILED: 'Falló la captura',
-          UNAVAILABLE: 'Adquirente no disponible',
-          RUNNING: 'En procesamiento',
-          CAPTURED: 'Pago capturado',
-          REJECTED: 'Pago rechazado',
-          COMPENSATED: 'Autorización anulada',
-          AWAITING_APPROVAL: 'Revisión pendiente',
-        } as Record<string, string>
-      )[status] ?? status
-    );
+  async checkpoints(): Promise<void> {
+    const run = this.activeRun();
+    if (!run) return;
+    try {
+      this.checkpointData.set(
+        await this.api.json<unknown[]>(
+          '/runs/' + run.id + '/checkpoints',
+          this.credentials,
+        ),
+      );
+      this.traceOpen.set(true);
+    } catch (error) {
+      this.error.set(
+        error instanceof Error
+          ? error.message
+          : 'No se pudo consultar el historial.',
+      );
+    }
+  }
+  readonly checkpointData = signal<unknown[]>([]);
+  keydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      void this.send();
+    }
   }
   nodeLabel(node: string): string {
-    if (node.startsWith('settlement-'))
-      return node.endsWith('compensate')
-        ? 'Anulación compensatoria'
-        : 'Captura del pago';
     return (
       (
         {
-          validate: 'Validación',
-          risk: 'Evaluación de riesgo',
-          merchant: 'Validación del comercio',
-          decision: 'Decisión de procesamiento',
-          review: 'Revisión humana',
-          approval: 'Aprobación',
-          authorize: 'Autorización',
-          settlement: 'Captura y compensación',
-          capture: 'Captura',
-          compensate: 'Anulación',
+          context: 'Preparando la investigación',
+          memory: 'Recuperando contexto de la conversación',
+          retrieve: 'Consultando conocimiento de pagos',
+          reason: 'Seleccionando herramientas de consulta',
+          tools: 'Consultando evidencia operacional',
+          generate_report: 'Construyendo informe estructurado',
+          validate_report: 'Verificando informe y referencias',
+          review_pending: 'Esperando revisión humana',
+          human_review: 'Registrando decisión del revisor',
+          respond: 'Redactando respuesta',
+          persist: 'Guardando conversación',
+          getPayment: 'Consultar pago',
+          getPaymentTimeline: 'Consultar eventos del pago',
+          getPaymentMerchant: 'Consultar comercio',
         } as Record<string, string>
-      )[node] ??
-      (node.includes('PARALLEL')
-        ? 'Riesgo y comercio'
-        : node === '__START__'
-          ? 'Inicio del flujo'
-          : node === '__END__'
-            ? 'Fin del flujo'
-            : node)
+      )[node] ?? node
     );
   }
 }

@@ -1,6 +1,7 @@
 FROM axiz-base AS build
 WORKDIR /opt/build
 COPY src ./src
+COPY datasets ./datasets
 RUN mvn -B -ntp package -DskipTests
 FROM axiz-runtime
 WORKDIR /opt/app

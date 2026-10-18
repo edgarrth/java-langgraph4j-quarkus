@@ -6,4 +6,4 @@ if [[ -f .env ]]; then
   set +a
 fi
 ./mvnw -B -ntp package -DskipTests
-java -jar target/quarkus-app/quarkus-run.jar
+exec java -jar target/quarkus-app/quarkus-run.jar

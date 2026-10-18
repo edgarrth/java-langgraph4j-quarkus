@@ -1,0 +1,54 @@
+{
+  "documents": [
+    {
+      "id": "kb-decline-codes-v1",
+      "content": "Payment decline handling playbook. The processor code DO_NOT_HONOR means the issuer declined the authorization without providing a more specific reason. It must not be translated into a false deterministic cause such as insufficient funds or fraud. Operations should report that the issuer declined the authorization, preserve the processor code as evidence, and avoid aggressive automatic retries. A safe customer-facing path is to suggest another payment method or ask the cardholder to contact the issuer. A retry may be attempted only when product policy explicitly permits it and should never be represented as guaranteed to succeed. Codes such as INSUFFICIENT_FUNDS can be explained as funds-related because the processor supplied a specific code. SUSPECTED_FRAUD requires human or risk-policy review and must not expose internal fraud signals to the customer. EXPIRED_CARD and INVALID_CARD_DATA are actionable input problems and may be corrected before a new authorization. The operational diagnosis should always distinguish an observed processor code from an inferred cause. For DO_NOT_HONOR, the supported conclusion is 'issuer declined without a specific reason'; the unsupported conclusion is 'the account has no funds'.",
+      "metadata": {
+        "source": "decline-codes-playbook.md",
+        "category": "declines",
+        "domain": "payments",
+        "version": "1.0"
+      }
+    },
+    {
+      "id": "kb-timeout-reconciliation-v1",
+      "content": "Unknown-result and timeout playbook for payment processing. When a capture or authorization request times out after it may have reached the processor, the payment must not immediately be retried as a brand-new operation because the original request may actually have succeeded. The safe state is an intermediate status such as PROCESSING or UNKNOWN while reconciliation checks the processor using an idempotency key, processor reference, status API, webhook, or later settlement evidence. If the timeline shows an authorization succeeded, capture was requested, and the processor timed out before returning a definitive capture result, the recommended action is reconciliation before retry. Duplicate capture prevention has priority over reducing apparent latency. Operations should verify whether the original processor request is visible, wait for an asynchronous callback within the configured SLA, and escalate if the state remains ambiguous after the reconciliation window. A retry scheduler can be valid when it performs a status/reconciliation lookup or an idempotent replay; it should not blindly create another financial operation. Human review is required when neither processor inquiry nor downstream settlement evidence can determine the outcome.",
+      "metadata": {
+        "source": "timeout-reconciliation-playbook.md",
+        "category": "processing",
+        "domain": "payments",
+        "version": "1.0"
+      }
+    },
+    {
+      "id": "kb-settlement-v1",
+      "content": "Settlement and reconciliation playbook. A payment that is CAPTURED is not necessarily SETTLED. Capture records the successful movement into the acquiring/processor capture flow; settlement is the later clearing and funding confirmation. Operations should inspect the payment timeline for SETTLEMENT_SUBMITTED and SETTLED events before declaring a settlement failure. A delay can be expected when a captured transaction is waiting for the next settlement batch, banking cut-off, weekend or processor cycle. If SETTLEMENT_SUBMITTED exists but SETTLED is absent beyond the processor SLA, investigate the settlement batch identifier, processor status and reconciliation file. If SETTLED exists, do not claim that the payment is still pending. Currency, merchant and processor calendars can affect timing, but those factors should be treated as hypotheses unless evidence is available. Recommended evidence order: local payment status, ordered event timeline, processor/settlement reference, and then operational policy. Never infer that funds reached the merchant solely from an authorization event.",
+      "metadata": {
+        "source": "settlement-reconciliation-playbook.md",
+        "category": "settlement",
+        "domain": "payments",
+        "version": "1.0"
+      }
+    },
+    {
+      "id": "kb-refund-reversal-v1",
+      "content": "Refund and reversal playbook. A reversal cancels or releases a prior authorization or financial operation when the original flow should not complete; a refund is a separate operation that returns funds after a payment was captured or settled. Operations must not use the terms interchangeably. When diagnosing a customer complaint, inspect whether the timeline contains REVERSAL_REQUESTED/REVERSED or REFUND_REQUESTED/REFUNDED and establish the original payment state first. A successful authorization followed by a reversal may still appear temporarily on a cardholder statement as a pending authorization depending on issuer behavior. A refund may have a processor-confirmed completion before it is visible to the cardholder, so the processor reference and expected issuer posting window are relevant. Never promise a posting time that is not backed by the configured processor/issuer SLA. If a refund or reversal is absent from the timeline, do not claim it occurred merely because the operator requested it outside this service.",
+      "metadata": {
+        "source": "refund-reversal-playbook.md",
+        "category": "refunds",
+        "domain": "payments",
+        "version": "1.0"
+      }
+    },
+    {
+      "id": "kb-investigation-policy-v1",
+      "content": "Evidence policy for AI-assisted payment operations. The AI assistant must separate authoritative operational data from knowledge-base guidance. Payment database records and ordered lifecycle events are authoritative for what happened to the specific payment. Merchant data supplies context but does not by itself prove the reason for a decline or processing failure. Knowledge documents define policies, meanings and recommended operational actions; they do not override a contradictory transaction record. Every diagnosis should state the payment identifier, summarize observed status and important events, identify the supporting evidence, and list recommended next actions. If evidence conflicts, is missing, or would require access to an external processor that is not represented by an available tool, the result must say that evidence is insufficient and require human review. Tenant boundaries are mandatory: data from another tenant must never be queried or included, even when a model proposes another identifier. The PoC tools are intentionally read-only, so the assistant can investigate and recommend but cannot capture, refund, reverse, retry, or otherwise mutate a financial transaction.",
+      "metadata": {
+        "source": "ai-payment-investigation-policy.md",
+        "category": "governance",
+        "domain": "payments",
+        "version": "1.0"
+      }
+    }
+  ]
+}

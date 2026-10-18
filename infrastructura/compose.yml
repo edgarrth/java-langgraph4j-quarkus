@@ -1,70 +1,108 @@
-name: axiz-payment-graph
-x-application: &application
-  image: axiz-payment-graph:1.0.0
-  build:
-    context: ..
-    dockerfile: infrastructura/Dockerfile
-    additional_contexts:
-      axiz-base: service:base
-      axiz-runtime: service:runtime-base
-  restart: unless-stopped
-  environment: &environment
-    API_KEY: ${API_KEY:-local-demo-key}
-    SIMULATOR_DELAY_MS: ${SIMULATOR_DELAY_MS:-300}
-    CHECKPOINT_DIR: /data/checkpoints
-    INTEGRATION_URL: http://simulator:8080
-  healthcheck:
-    test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/q/health/ready"]
-    interval: 15s
-    timeout: 3s
-    retries: 20
-    start_period: 20s
+name: axiz-payment-copilot
+x-backend-build: &backend-build
+  context: ..
+  dockerfile: infrastructura/Dockerfile
+  additional_contexts:
+    axiz-base: service:base
+    axiz-runtime: service:runtime-base
 services:
   base:
-    image: axiz-payment-base:1.0.0
+    image: axiz-payment-base:2.0.0
     build:
       context: ..
       dockerfile: infrastructura/Dockerfile.base
       target: builder
     entrypoint: ["/bin/true"]
   runtime-base:
-    image: axiz-payment-runtime:1.0.0
+    image: axiz-payment-runtime:2.0.0
     build:
       context: ..
       dockerfile: infrastructura/Dockerfile.base
       target: runtime
     entrypoint: ["/bin/true"]
-  simulator:
-    <<: *application
-    ports: ["127.0.0.1:${SIMULATOR_PORT:-8081}:8080"]
-  orchestrator:
-    <<: *application
-    profiles: ["all"]
-    ports: ["127.0.0.1:${HTTP_PORT:-8080}:8080"]
-    volumes: ["checkpoints:/data/checkpoints"]
-    depends_on:
-      simulator: {condition: service_healthy}
-  seed:
-    image: axiz-payment-base:1.0.0
-    profiles: ["all"]
-    entrypoint: ["bash", "/datasets/seed.sh"]
+  postgres:
+    image: postgres:18.6-alpine
     environment:
+      POSTGRES_USER: ${DB_USER:-axiz}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-axiz-local-password}
+      POSTGRES_DB: axiz_copilot
+    ports: ["127.0.0.1:${DB_PORT:-5432}:5432"]
+    volumes: ["postgres:/var/lib/postgresql"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $$POSTGRES_USER -d axiz_copilot >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    ports: ["127.0.0.1:${QDRANT_PORT:-6333}:6333"]
+    volumes: ["qdrant:/qdrant/storage"]
+    environment:
+      QDRANT__LOG_LEVEL: WARN
+    restart: unless-stopped
+  orchestrator:
+    image: axiz-payment-copilot:2.0.0
+    profiles: ["all"]
+    build: *backend-build
+    environment:
+      HTTP_PORT: 8080
+      JDBC_URL: jdbc:postgresql://postgres:5432/axiz_copilot
+      DB_USER: ${DB_USER:-axiz}
+      DB_PASSWORD: ${DB_PASSWORD:-axiz-local-password}
+      AI_PROVIDER: ${AI_PROVIDER:-OPENAI}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-5-mini}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-90}
+      COPILOT_API_KEYS: ${COPILOT_API_KEYS:-tenant-pe-01:local-demo-key,tenant-other:other-demo-key}
+      REVIEWER_KEY: ${REVIEWER_KEY:-local-reviewer-key}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-axiz_payment_knowledge_v2}
+      RAG_TOP_K: ${RAG_TOP_K:-6}
+      RAG_THRESHOLD: ${RAG_THRESHOLD:-0.45}
+      CHUNK_TOKENS: ${CHUNK_TOKENS:-500}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-60}
+      MEMORY_WINDOW: ${MEMORY_WINDOW:-14}
+      BOOTSTRAP_ENABLED: ${BOOTSTRAP_ENABLED:-true}
       API_KEY: ${API_KEY:-local-demo-key}
-      BASE_URL: http://orchestrator:8080
-      FRONTEND_PORT: ${FRONTEND_PORT:-4200}
-    volumes: ["../datasets:/datasets:ro"]
+      INTEGRATION_URL: http://simulator:8080
+    ports: ["127.0.0.1:${HTTP_PORT:-8080}:8080"]
     depends_on:
-      orchestrator: {condition: service_healthy}
-    restart: "no"
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_started }
+    volumes: ["legacy-checkpoints:/opt/app/.runtime/checkpoints"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-fsS",
+          "-o",
+          "/dev/null",
+          "http://localhost:8080/q/health/ready",
+        ]
+      interval: 20s
+      timeout: 3s
+      retries: 30
+      start_period: 180s
+    restart: unless-stopped
   frontend-base:
-    image: axiz-payment-frontend-base:1.0.0
+    image: axiz-payment-frontend-base:2.0.0
     profiles: ["all"]
     build:
       context: ../frontend
       dockerfile: Dockerfile.base
     entrypoint: ["/bin/true"]
   frontend:
-    image: axiz-payment-frontend:1.0.0
+    image: axiz-payment-frontend:2.0.0
     profiles: ["all"]
     build:
       context: ../frontend
@@ -73,12 +111,38 @@ services:
         axiz-frontend-base: service:frontend-base
     ports: ["127.0.0.1:${FRONTEND_PORT:-4200}:8080"]
     depends_on:
-      orchestrator: {condition: service_healthy}
+      orchestrator: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://localhost:8080/healthz",
+        ]
       interval: 30s
       timeout: 3s
       retries: 10
     restart: unless-stopped
+  simulator:
+    image: axiz-payment-copilot:2.0.0
+    profiles: ["legacy"]
+    build: *backend-build
+    environment:
+      JDBC_URL: jdbc:postgresql://postgres:5432/axiz_copilot
+      DB_USER: ${DB_USER:-axiz}
+      DB_PASSWORD: ${DB_PASSWORD:-axiz-local-password}
+      AI_PROVIDER: FIXTURE
+      BOOTSTRAP_ENABLED: "false"
+      SIMULATOR_DELAY_MS: ${SIMULATOR_DELAY_MS:-300}
+      API_KEY: ${API_KEY:-local-demo-key}
+    ports: ["127.0.0.1:${SIMULATOR_PORT:-8081}:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
 volumes:
-  checkpoints:
+  postgres:
+  qdrant:
+  legacy-checkpoints:
